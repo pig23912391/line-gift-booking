@@ -75,22 +75,25 @@
   </div>
 
   <script>
+    // ⚠️ 調整 1：請務必填入從 API 分頁複製出來那串以 eyJ 開頭的「超長」金鑰！
     const SUPABASE_URL = "https://inozwjvbxsxgdknojeej.supabase.co";
-    const SUPABASE_ANON_KEY = "sb_publishable_701jaFWbPUtmHC349aVZyA_L9iFSrB8";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlub3p3anZieHN4Z2Rrbm9qZWVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNjM1NDAsImV4cCI6MjA5NTYzOTU0MH0.8f5S9sNS8Xr83LEao_zP8cvi6NSmXF0oaqwwNS7klKw";
     const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ⚠️ 調整 2：請填入你在 LINE 後台 LIFF 頁籤看到的 LIFF ID
+    const LINE_MINI_APP_LIFF_ID = "https://miniapp.line.me/2010234993-AY5MSoPS";
 
     let currentLineUserId = null; 
     let selectedGift = null;
 
-    // ✨ 優化後的啟動邏輯：一載入就立刻抓禮品！
+    // 頁面初始化
     document.addEventListener("DOMContentLoaded", async () => {
-      
-      // 1. 強制第一步：先去 Supabase 撈商品，確保不管什麼環境選單都能點開
+      // 第一步：不管環境如何，先強制撈禮品，確保選單一定打得開
       await loadGifts();
       document.getElementById('pickupDate').min = new Date().toISOString().split('T')[0];
 
-      // 2. 第二步：在背景初始化 LINE Mini App 身分
-      liff.ready
+      // 第二步：正確初始化 LINE Mini App SDK
+      liff.init({ liffId: LINE_MINI_APP_LIFF_ID })
         .then(async () => {
           if (!liff.isLoggedIn()) {
             liff.login();
@@ -103,60 +106,75 @@
           // 自動填入 LINE 暱稱
           document.getElementById("username").value = profile.displayName;
 
-          // 檢查該會員有沒有重複預約
+          // 檢查重複預約
           await checkUserReservation();
         })
         .catch((err) => {
-          console.error("Mini App 環境初始化失敗，切換至相容測試模式:", err);
-          // 防呆機制：若不在 LINE 內開啟，給予預設測試 ID 允許功能測試
+          console.error("LINE SDK 初始化失敗:", err);
+          // 偵錯彈窗：如果在 LINE 外開啟，會提示並切換到測試模式
+          alert("LINE 環境載入提示: 偵測到未在正式小程式環境開啟，已切換至測試模式。");
           currentLineUserId = "U1234567890_TEST_USER";
+          checkUserReservation();
         });
     });
 
     async function checkUserReservation() {
       if (!currentLineUserId) return;
-      const { data, error } = await supabase
-        .from('reservations')
-        .select('id')
-        .eq('line_user_id', currentLineUserId)
-        .maybeSingle();
+      try {
+        const { data, error } = await supabase
+          .from('reservations')
+          .select('id')
+          .eq('line_user_id', currentLineUserId)
+          .maybeSingle();
 
-      if (data) {
-        showModal("⚠️", "您已預約", "您已預約，如有問題請洽官方帳號。");
-        document.getElementById("reservationForm").innerHTML = `<div class="text-center py-8 text-red-500 font-medium">您已完成預約，表單已關閉。</div>`;
+        if (data) {
+          showModal("⚠️", "您已預約", "您已預約，如有問題請洽官方帳號。");
+          document.getElementById("reservationForm").innerHTML = `<div class="text-center py-8 text-red-500 font-medium">您已完成預約，表單已關閉。</div>`;
+        }
+      } catch (e) {
+        console.error(e);
       }
     }
 
     async function loadGifts() {
-      const { data: gifts, error } = await supabase.from('gifts').select('*');
-      if (error) return console.error("撈取禮品失敗:", error);
-
-      const dropdownContent = document.getElementById("dropdownContent");
-      dropdownContent.innerHTML = "";
-
-      gifts.forEach(gift => {
-        const isOut = gift.stock <= 0;
-        const item = document.createElement("div");
-        item.className = `flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer border-b last:border-0 ${isOut ? 'opacity-50 pointer-events-none bg-gray-100' : ''}`;
+      try {
+        const { data: gifts, error } = await supabase.from('gifts').select('*');
         
-        item.innerHTML = `
-          <img src="${gift.image_url || 'https://placeholder.com/150'}" class="w-12 h-12 object-cover rounded-md" alt="${gift.name}">
-          <div class="flex-1">
-            <div class="font-medium text-gray-800">${gift.name}</div>
-            <div class="text-xs text-gray-500">領取地點：${gift.location}</div>
-          </div>
-          <div class="text-xs font-bold ${isOut ? 'text-red-500' : 'text-emerald-600'}">
-            ${isOut ? '已售完' : `剩餘 ${gift.stock}`}
-          </div>
-        `;
-
-        if (!isOut) {
-          item.addEventListener("click", () => {
-            selectGift(gift);
-          });
+        // 偵錯彈窗：如果 Supabase 因為金鑰錯了拒絕連線，手機會立刻跳出警告
+        if (error) {
+          alert("Supabase 資料庫連線失敗，請檢查你的金鑰是否正確！\n錯誤訊息: " + error.message);
+          return console.error(error);
         }
-        dropdownContent.appendChild(item);
-      });
+
+        const dropdownContent = document.getElementById("dropdownContent");
+        dropdownContent.innerHTML = "";
+
+        gifts.forEach(gift => {
+          const isOut = gift.stock <= 0;
+          const item = document.createElement("div");
+          item.className = `flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer border-b last:border-0 ${isOut ? 'opacity-50 pointer-events-none bg-gray-100' : ''}`;
+          
+          item.innerHTML = `
+            <img src="${gift.image_url || 'https://placeholder.com/150'}" class="w-12 h-12 object-cover rounded-md" alt="${gift.name}">
+            <div class="flex-1">
+              <div class="font-medium text-gray-800">${gift.name}</div>
+              <div class="text-xs text-gray-500">領取地點：${gift.location}</div>
+            </div>
+            <div class="text-xs font-bold ${isOut ? 'text-red-500' : 'text-emerald-600'}">
+              ${isOut ? '已售完' : `剩餘 ${gift.stock}`}
+            </div>
+          `;
+
+          if (!isOut) {
+            item.addEventListener("click", () => {
+              selectGift(gift);
+            });
+          }
+          dropdownContent.appendChild(item);
+        });
+      } catch (e) {
+        alert("程式執行發生未預期錯誤: " + e.message);
+      }
     }
 
     function selectGift(gift) {
