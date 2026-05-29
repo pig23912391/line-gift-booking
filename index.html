@@ -6,6 +6,7 @@
   <title>會員專屬禮品預約系統</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     .dropdown-content { display: none; }
     .dropdown-content.show { display: block; }
@@ -55,8 +56,7 @@
           <span id="selectedOptionText" class="text-gray-400">請選擇禮品...</span>
           <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
         </div>
-        <div id="dropdownContent" class="dropdown-content absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
-          </div>
+        <div id="dropdownContent" class="dropdown-content absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto"></div>
         <input type="hidden" id="selectedGiftId" required>
       </div>
 
@@ -75,26 +75,47 @@
   </div>
 
   <script>
-    // ⚠️ 請記得填入你自己的專案網址與金鑰！
     const SUPABASE_URL = "https://inozwjvbxsxgdknojeej.supabase.co";
     const SUPABASE_ANON_KEY = "sb_publishable_701jaFWbPUtmHC349aVZyA_L9iFSrB8";
     const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const MOCK_LINE_USER_ID = "U1234567890abcdef1234567890test"; 
-
+    // 用來儲存真實小程式登入後的 LINE User ID
+    let currentLineUserId = null; 
     let selectedGift = null;
 
-    document.addEventListener("DOMContentLoaded", async () => {
-      await checkUserReservation();
-      await loadGifts();
-      document.getElementById('pickupDate').min = new Date().toISOString().split('T')[0];
+    // ✨ 修正 2：改為 LINE Mini App 標準原生啟動邏輯
+    document.addEventListener("DOMContentLoaded", () => {
+      liff.ready
+        .then(async () => {
+          // 如果沒有在 LINE 環境內登入，強制要求登入
+          if (!liff.isLoggedIn()) {
+            liff.login();
+            return;
+          }
+
+          // 取得真正的 LINE Profile
+          const profile = await liff.getProfile();
+          currentLineUserId = profile.userId;
+
+          // 自動將使用者的 LINE 暱稱填入姓名欄位
+          document.getElementById("username").value = profile.displayName;
+
+          // 確定拿到真實 LINE ID 後，才允許執行檢查重複與載入禮品
+          await checkUserReservation();
+          await loadGifts();
+          document.getElementById('pickupDate').min = new Date().toISOString().split('T')[0];
+        })
+        .catch((err) => {
+          console.error("Mini App 初始化失敗:", err);
+          alert("請在 LINE 內直接開啟此小程式。");
+        });
     });
 
     async function checkUserReservation() {
       const { data, error } = await supabase
         .from('reservations')
         .select('id')
-        .eq('line_user_id', MOCK_LINE_USER_ID)
+        .eq('line_user_id', currentLineUserId) // 改用真實 ID
         .maybeSingle();
 
       if (data) {
@@ -167,7 +188,7 @@
       const name = document.getElementById("username").value;
       const phoneTail = document.getElementById("phoneTail").value;
       const pickupDate = document.getElementById("pickupDate").value;
-      const pickupTime = document.getElementById("pickupTime").value; // ✨ 取得選取的時間
+      const pickupTime = document.getElementById("pickupTime").value;
       const giftId = document.getElementById("selectedGiftId").value;
 
       if (!giftId) {
@@ -175,14 +196,14 @@
         return;
       }
 
-      // 呼叫我們在 Supabase 寫好的 RPC 函式（多了 p_time 參數）
+      // ✨ 修正 3：RPC 傳入真實的 currentLineUserId
       const { data: result, error } = await supabase.rpc('submit_reservation', {
-        p_line_id: MOCK_LINE_USER_ID,
+        p_line_id: currentLineUserId,
         p_name: name,
         p_phone: phoneTail,
         p_gift_id: parseInt(giftId),
         p_date: pickupDate,
-        p_time: pickupTime // ✨ 傳入時間給後端
+        p_time: pickupTime
       });
 
       if (error) {
@@ -196,15 +217,15 @@
         showModal("❌", "庫存不足", "該禮品剛剛已被搶光，請選擇其他禮品。");
         loadGifts(); 
       } else if (result === 'SUCCESS') {
-        // 彈出視窗提示顯示日期與時間
         showModal("🎉", "預約成功！", `預約完成！通知已寄送至您的 LINE 官方帳號。<br><br><b>領取日期：</b>${pickupDate} ${pickupTime}<br><b>領取地點：</b>${selectedGift.location}<br><b>修改日期請撥打客服電話。</b>`);
 
         const gasUrl = "https://script.google.com/macros/s/AKfycbzb7pkmEKoxi2K4xwqPIZAH-oNZqLwRBHovIuyasuJmPIJt2EX_ogx1aVj84Buwyh7-/exec";
         
+        // 傳送真實 ID 給 GAS 發送通知
         fetch(gasUrl, {
           method: "POST",
           body: JSON.stringify({
-            line_user_id: userLineId,
+            line_user_id: currentLineUserId,
             name: name,
             phone_tail: phoneTail,
             gift_name: selectedGift.name,
@@ -216,6 +237,7 @@
         .then(res => res.json())
         .then(data => console.log("LINE 通知發送結果:", data))
         .catch(err => console.error("LINE 通知發送失敗:", err));
+        
         document.getElementById("reservationForm").innerHTML = `<div class="text-center py-8 text-emerald-600 font-medium">預約成功！畫面已鎖定。</div>`;
       }
     });
