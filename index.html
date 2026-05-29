@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>會員專屬禮品預約系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    .dropdown-content { display: none; }
+    .dropdown-content.show { display: block; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center p-4">
+
+  <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-6">
+    <div class="text-center">
+      <h1 class="text-2xl font-bold text-gray-800">🎁 禮品領取預約</h1>
+      <p class="text-sm text-gray-500 mt-1">每位會員限預約領取一次</p>
+    </div>
+
+    <form id="reservationForm" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">會員姓名</label>
+        <input type="text" id="username" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none" placeholder="請輸入姓名">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">電話後 3 碼</label>
+        <input type="text" id="phoneTail" required maxlength="3" pattern="\d{3}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none" placeholder="例如：123">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">預計領取日期</label>
+        <input type="date" id="pickupDate" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">預計領取時間</label>
+        <select id="pickupTime" required class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none text-gray-700">
+          <option value="" disabled selected>請選擇領取時間...</option>
+          <option value="10:00">10:00</option>
+          <option value="11:00">11:00</option>
+          <option value="13:00">13:00</option>
+          <option value="14:00">14:00</option>
+          <option value="15:00">15:00</option>
+          <option value="16:00">16:00</option>
+          <option value="17:00">17:00</option>
+        </select>
+      </div>
+
+      <div class="relative">
+        <label class="block text-sm font-medium text-gray-700 mb-1">選擇禮品品項</label>
+        <div id="dropdownBtn" class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white flex items-center justify-between cursor-pointer select-none">
+          <span id="selectedOptionText" class="text-gray-400">請選擇禮品...</span>
+          <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+        </div>
+        <div id="dropdownContent" class="dropdown-content absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+          </div>
+        <input type="hidden" id="selectedGiftId" required>
+      </div>
+
+      <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-lg transition-colors shadow-md">
+        確認預約
+      </button>
+    </form>
+  </div>
+
+  <div id="statusModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+      <div id="modalIcon" class="text-4xl">⚠️</div>
+      <h2 id="modalTitle" class="text-lg font-bold text-gray-800">提示訊息</h2>
+      <p id="modalMsg" class="text-sm text-gray-600 leading-relaxed"></p>
+    </div>
+  </div>
+
+  <script>
+    // ⚠️ 請記得填入你自己的專案網址與金鑰！
+    const SUPABASE_URL = "https://inozwjvbxsxgdknojeej.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_701jaFWbPUtmHC349aVZyA_L9iFSrB8";
+    const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const MOCK_LINE_USER_ID = "U1234567890abcdef1234567890test"; 
+
+    let selectedGift = null;
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      await checkUserReservation();
+      await loadGifts();
+      document.getElementById('pickupDate').min = new Date().toISOString().split('T')[0];
+    });
+
+    async function checkUserReservation() {
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('id')
+        .eq('line_user_id', MOCK_LINE_USER_ID)
+        .maybeSingle();
+
+      if (data) {
+        showModal("⚠️", "您已預約", "您已預約，如有問題請洽官方帳號。");
+        document.getElementById("reservationForm").innerHTML = `<div class="text-center py-8 text-red-500 font-medium">您已完成預約，表單已關閉。</div>`;
+      }
+    }
+
+    async function loadGifts() {
+      const { data: gifts, error } = await supabase.from('gifts').select('*');
+      if (error) return console.error(error);
+
+      const dropdownContent = document.getElementById("dropdownContent");
+      dropdownContent.innerHTML = "";
+
+      gifts.forEach(gift => {
+        const isOut = gift.stock <= 0;
+        const item = document.createElement("div");
+        item.className = `flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer border-b last:border-0 ${isOut ? 'opacity-50 pointer-events-none bg-gray-100' : ''}`;
+        
+        item.innerHTML = `
+          <img src="${gift.image_url}" class="w-12 h-12 object-cover rounded-md" alt="${gift.name}">
+          <div class="flex-1">
+            <div class="font-medium text-gray-800">${gift.name}</div>
+            <div class="text-xs text-gray-500">領取地點：${gift.location}</div>
+          </div>
+          <div class="text-xs font-bold ${isOut ? 'text-red-500' : 'text-emerald-600'}">
+            ${isOut ? '已售完' : `剩餘 ${gift.stock}`}
+          </div>
+        `;
+
+        if (!isOut) {
+          item.addEventListener("click", () => {
+            selectGift(gift);
+          });
+        }
+        dropdownContent.appendChild(item);
+      });
+    }
+
+    function selectGift(gift) {
+      selectedGift = gift;
+      document.getElementById("selectedGiftId").value = gift.id;
+      document.getElementById("selectedOptionText").innerHTML = `
+        <div class="flex items-center gap-2 text-left">
+          <img src="${gift.image_url}" class="w-6 h-6 object-cover rounded">
+          <span class="text-gray-800 font-medium text-sm">${gift.name}</span>
+        </div>
+      `;
+      toggleDropdown();
+    }
+
+    const dropdownBtn = document.getElementById("dropdownBtn");
+    const dropdownContent = document.getElementById("dropdownContent");
+    dropdownBtn.addEventListener("click", toggleDropdown);
+    
+    function toggleDropdown() {
+      dropdownContent.classList.toggle("show");
+    }
+
+    window.addEventListener("click", (e) => {
+      if (!dropdownBtn.contains(e.target) && !dropdownContent.contains(e.target)) {
+        dropdownContent.classList.remove("show");
+      }
+    });
+
+    document.getElementById("reservationForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const name = document.getElementById("username").value;
+      const phoneTail = document.getElementById("phoneTail").value;
+      const pickupDate = document.getElementById("pickupDate").value;
+      const pickupTime = document.getElementById("pickupTime").value; // ✨ 取得選取的時間
+      const giftId = document.getElementById("selectedGiftId").value;
+
+      if (!giftId) {
+        alert("請選擇禮品品項！");
+        return;
+      }
+
+      // 呼叫我們在 Supabase 寫好的 RPC 函式（多了 p_time 參數）
+      const { data: result, error } = await supabase.rpc('submit_reservation', {
+        p_line_id: MOCK_LINE_USER_ID,
+        p_name: name,
+        p_phone: phoneTail,
+        p_gift_id: parseInt(giftId),
+        p_date: pickupDate,
+        p_time: pickupTime // ✨ 傳入時間給後端
+      });
+
+      if (error) {
+        showModal("❌", "系統錯誤", "預約失敗，請稍後再試。");
+        return;
+      }
+
+      if (result === 'ALREADY_RESERVED') {
+        showModal("⚠️", "您已預約", "您已預約，如有問題請洽官方帳號。");
+      } else if (result === 'OUT_OF_STOCK') {
+        showModal("❌", "庫存不足", "該禮品剛剛已被搶光，請選擇其他禮品。");
+        loadGifts(); 
+      } else if (result === 'SUCCESS') {
+        // 彈出視窗提示顯示日期與時間
+        showModal("🎉", "預約成功！", `預約完成！通知已寄送至您的 LINE 官方帳號。<br><br><b>領取日期：</b>${pickupDate} ${pickupTime}<br><b>領取地點：</b>${selectedGift.location}<br><b>修改日期請撥打客服電話。</b>`);
+        
+        document.getElementById("reservationForm").innerHTML = `<div class="text-center py-8 text-emerald-600 font-medium">預約成功！畫面已鎖定。</div>`;
+      }
+    });
+
+    function showModal(icon, title, msg) {
+      document.getElementById("modalIcon").innerHTML = icon;
+      document.getElementById("modalTitle").innerHTML = title;
+      document.getElementById("modalMsg").innerHTML = msg;
+      document.getElementById("statusModal").classList.remove("hidden");
+    }
+  </script>
+</body>
+</html>
