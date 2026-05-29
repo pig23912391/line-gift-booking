@@ -198,7 +198,24 @@
       } else if (result === 'SUCCESS') {
         // 彈出視窗提示顯示日期與時間
         showModal("🎉", "預約成功！", `預約完成！通知已寄送至您的 LINE 官方帳號。<br><br><b>領取日期：</b>${pickupDate} ${pickupTime}<br><b>領取地點：</b>${selectedGift.location}<br><b>修改日期請撥打客服電話。</b>`);
+
+        const gasUrl = "https://script.google.com/macros/s/AKfycbzb7pkmEKoxi2K4xwqPIZAH-oNZqLwRBHovIuyasuJmPIJt2EX_ogx1aVj84Buwyh7-/exec";
         
+        fetch(gasUrl, {
+          method: "POST",
+          body: JSON.stringify({
+            line_user_id: userLineId,
+            name: name,
+            phone_tail: phoneTail,
+            gift_name: selectedGift.name,
+            pickup_date: pickupDate,
+            pickup_time: pickupTime,
+            location: selectedGift.location
+          })
+        })
+        .then(res => res.json())
+        .then(data => console.log("LINE 通知發送結果:", data))
+        .catch(err => console.error("LINE 通知發送失敗:", err));
         document.getElementById("reservationForm").innerHTML = `<div class="text-center py-8 text-emerald-600 font-medium">預約成功！畫面已鎖定。</div>`;
       }
     });
